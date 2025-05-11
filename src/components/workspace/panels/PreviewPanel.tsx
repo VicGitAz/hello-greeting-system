@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -49,12 +50,122 @@ export default function PreviewPanel() {
         iframe.contentDocument || iframe.contentWindow?.document;
 
       if (iframeDoc) {
-        iframeDoc.open();
-        iframeDoc.write(generatedCode);
-        iframeDoc.close();
+        try {
+          // Handle file structure format or fallback to raw HTML
+          if (generatedCode.includes("// src/") || generatedCode.includes("// components/")) {
+            // Create a simple web app structure with the extracted files
+            const files = parseFiles(generatedCode);
+            
+            // Build a basic HTML structure to show the app
+            let htmlContent = `
+              <!DOCTYPE html>
+              <html lang="en">
+              <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Generated App Preview</title>
+                <style>
+                  /* Reset and base styles */
+                  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif; }
+                  * { box-sizing: border-box; }
+                </style>
+            `;
+            
+            // Add any CSS files
+            const cssFiles = Object.entries(files).filter(([path]) => path.endsWith('.css'));
+            cssFiles.forEach(([_, content]) => {
+              htmlContent += `<style>${content}</style>`;
+            });
+            
+            htmlContent += `</head><body>`;
+            
+            // Add HTML content if it exists
+            const htmlFiles = Object.entries(files).filter(([path]) => path.endsWith('.html'));
+            if (htmlFiles.length > 0) {
+              htmlContent += htmlFiles[0][1]; // Use first HTML file content for body
+            } else {
+              // If no HTML files, just add a div for React to mount
+              htmlContent += `<div id="root"></div>`;
+            }
+            
+            // Add any JS files
+            const jsFiles = Object.entries(files).filter(([path]) => 
+              path.endsWith('.js') || path.endsWith('.jsx') || path.endsWith('.ts') || path.endsWith('.tsx')
+            );
+            
+            jsFiles.forEach(([_, content]) => {
+              // For simplicity, we're just embedding the JS code directly
+              // In a real implementation, you would want to properly handle React/JSX content
+              htmlContent += `<script>\n/* JS content would be processed here in a real implementation */\n</script>`;
+            });
+            
+            htmlContent += `</body></html>`;
+            
+            iframeDoc.open();
+            iframeDoc.write(htmlContent);
+            iframeDoc.close();
+          } else {
+            // Just use the code as-is if it's not in file format
+            iframeDoc.open();
+            iframeDoc.write(generatedCode);
+            iframeDoc.close();
+          }
+        } catch (error) {
+          console.error("Error updating iframe with generated code:", error);
+          iframeDoc.open();
+          iframeDoc.write(`
+            <html>
+              <body>
+                <div style="color: red; padding: 20px;">
+                  <h3>Error rendering preview</h3>
+                  <p>${error.message}</p>
+                </div>
+              </body>
+            </html>
+          `);
+          iframeDoc.close();
+        }
       }
     }
   }, [generatedCode, isLoading]);
+
+  // Helper function to parse files from code with file path comments
+  const parseFiles = (code: string): Record<string, string> => {
+    const files: Record<string, string> = {};
+    let currentFilePath: string | null = null;
+    let currentFileContent: string[] = [];
+    
+    // Split the code by lines
+    const lines = code.split('\n');
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
+      // Check if line is a file path comment (e.g., "// src/App.tsx")
+      if (line.trimStart().startsWith('// ') && !line.includes('//')) {
+        // If we were collecting content for a previous file, save it
+        if (currentFilePath) {
+          files[currentFilePath] = currentFileContent.join('\n');
+          currentFileContent = [];
+        }
+        
+        // Extract path from comment
+        const path = line.trimStart().replace('// ', '');
+        currentFilePath = path;
+      } 
+      // If not a path comment and we have a current file path, add to content
+      else if (currentFilePath) {
+        currentFileContent.push(line);
+      }
+    }
+    
+    // Don't forget to add the last file
+    if (currentFilePath && currentFileContent.length > 0) {
+      files[currentFilePath] = currentFileContent.join('\n');
+    }
+    
+    return files;
+  };
 
   const handleRefresh = () => {
     setIsLoading(true);

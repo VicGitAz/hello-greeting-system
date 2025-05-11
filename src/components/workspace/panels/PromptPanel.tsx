@@ -88,10 +88,15 @@ export default function PromptPanel() {
       ${prompt}\n
       \n
       Include these features: ${selectedFeatures.join(", ")}\n
+      
+      Format your response with file paths as comments, like:
+      // src/App.tsx
+      import React from 'react';
+      ...
     `;
 
     const response = await generateApp(enhancedPrompt);
-    console.log("mermaid code:", response.mermaidCode);
+    console.log("AI response:", response);
     setResult(response);
 
     // Add AI response to chat
@@ -107,13 +112,42 @@ export default function PromptPanel() {
     });
     document.dispatchEvent(aiChatEvent);
 
-    // Send the generated code to the preview panel
-    if (response.code) {
+    // Extract code from the response
+    // This could be the entire response.text or specifically response.code if available
+    const codeToSend = response.code || extractCodeFromResponse(response.text);
+    
+    if (codeToSend) {
       const previewEvent = new CustomEvent("app-preview-update", {
-        detail: { code: response.code },
+        detail: { code: codeToSend },
       });
       document.dispatchEvent(previewEvent);
     }
+  };
+
+  // Helper function to extract code from the AI response text
+  const extractCodeFromResponse = (text: string): string | null => {
+    if (!text) return null;
+    
+    // Look for code blocks in markdown format (```code```)
+    const codeBlockRegex = /```(?:jsx|tsx|js|ts|html|css)?\s*([\s\S]*?)```/g;
+    let matches = [];
+    let match;
+    
+    while ((match = codeBlockRegex.exec(text)) !== null) {
+      matches.push(match[1]);
+    }
+    
+    if (matches.length > 0) {
+      // Join all code blocks with proper file headers
+      return matches.join('\n\n');
+    }
+    
+    // If no code blocks found but there are file comments, return the whole text
+    if (text.includes('// src/') || text.includes('// components/')) {
+      return text;
+    }
+    
+    return null;
   };
 
   return (

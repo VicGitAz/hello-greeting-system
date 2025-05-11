@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -111,8 +112,10 @@ export default function CodePanel() {
   useEffect(() => {
     // Listen for code updates from the prompt panel
     const handleAppPreviewUpdate = (event) => {
-      setGeneratedCode(event.detail.code);
-      parseCodeIntoFiles(event.detail.code);
+      if (event.detail.code) {
+        setGeneratedCode(event.detail.code);
+        parseCodeIntoFiles(event.detail.code);
+      }
     };
 
     document.addEventListener("app-preview-update", handleAppPreviewUpdate);
@@ -125,28 +128,90 @@ export default function CodePanel() {
   }, []);
 
   const parseCodeIntoFiles = (code) => {
-    // Default to a single HTML file if no clear separation
-    const files = {
-      "index.html": code,
-    };
-
-    // Try to extract CSS and JavaScript if they're in separate blocks
-    const cssMatch = code.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
-    const jsMatch = code.match(/<script[^>]*>([\s\S]*?)<\/script>/i);
-
-    if (cssMatch && cssMatch[1]) {
-      files["styles.css"] = cssMatch[1].trim();
+    // Check if the code is a string
+    if (typeof code !== 'string') {
+      console.error("Code is not a string:", code);
+      return;
     }
 
-    if (jsMatch && jsMatch[1]) {
-      files["script.js"] = jsMatch[1].trim();
-    }
+    try {
+      // If this is already LLM response format with file paths as comments
+      if (code.includes("// src/") || code.includes("// components/")) {
+        const files = {};
+        let currentFilePath = null;
+        let currentFileContent = [];
+        
+        // Split the code by lines
+        const lines = code.split('\n');
+        
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          
+          // Check if line is a file path comment (e.g., "// src/App.tsx")
+          if (line.trimStart().startsWith('// ') && !line.includes('//')) {
+            // If we were collecting content for a previous file, save it
+            if (currentFilePath) {
+              files[currentFilePath] = currentFileContent.join('\n');
+              currentFileContent = [];
+            }
+            
+            // Extract path from comment
+            const path = line.trimStart().replace('// ', '');
+            currentFilePath = path;
+          } 
+          // If not a path comment and we have a current file path, add to content
+          else if (currentFilePath) {
+            currentFileContent.push(line);
+          }
+        }
+        
+        // Don't forget to add the last file
+        if (currentFilePath && currentFileContent.length > 0) {
+          files[currentFilePath] = currentFileContent.join('\n');
+        }
+        
+        if (Object.keys(files).length > 0) {
+          setParsedFiles(files);
+          setSelectedFile(Object.keys(files)[0]);
+          setOpenFiles([Object.keys(files)[0]]);
+          // Clear unsaved state when new code is generated
+          setUnsavedChanges(new Set());
+          return;
+        }
+      }
 
-    setParsedFiles(files);
-    setSelectedFile("index.html");
-    setOpenFiles(["index.html"]);
-    // Clear unsaved state when new code is generated
-    setUnsavedChanges(new Set());
+      // Default fallback if we don't detect file structure
+      const files = {
+        "index.html": code,
+      };
+
+      // Try to extract CSS and JavaScript if they're in separate blocks
+      const cssMatch = code.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
+      const jsMatch = code.match(/<script[^>]*>([\s\S]*?)<\/script>/i);
+
+      if (cssMatch && cssMatch[1]) {
+        files["styles.css"] = cssMatch[1].trim();
+      }
+
+      if (jsMatch && jsMatch[1]) {
+        files["script.js"] = jsMatch[1].trim();
+      }
+
+      setParsedFiles(files);
+      setSelectedFile(Object.keys(files)[0]);
+      setOpenFiles([Object.keys(files)[0]]);
+      // Clear unsaved state when new code is generated
+      setUnsavedChanges(new Set());
+      
+    } catch (error) {
+      console.error("Error parsing code into files:", error);
+      // Fallback to treating the entire code as a single HTML file
+      setParsedFiles({
+        "index.html": code,
+      });
+      setSelectedFile("index.html");
+      setOpenFiles(["index.html"]);
+    }
   };
 
   const handleCopyCode = () => {
