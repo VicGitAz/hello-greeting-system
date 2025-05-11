@@ -1,27 +1,31 @@
-import { Toaster } from "@/components/ui/toaster";
-import { Toaster as Sonner } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import Index from "./pages/Index";
-import NotFound from "./pages/NotFound";
+import React from "react";
+import { Routes, Route } from "react-router-dom";
+import LandingPage from "./components/pages/home";
+import Dashboard from "./components/pages/dashboard";
+import Workspace from "./components/pages/workspace";
+import LoginForm from "./components/auth/LoginForm";
+import SignUpForm from "./components/auth/SignUpForm";
+import Success from "./components/pages/success";
+import { useRoutes } from "react-router-dom";
+import routes from "tempo-routes";
 
-const queryClient = new QueryClient();
+export default function App() {
+  return (
+    <>
+      {/* For the tempo routes */}
+      {import.meta.env.VITE_TEMPO && useRoutes(routes)}
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Index />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
-    </TooltipProvider>
-  </QueryClientProvider>
-);
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/workspace" element={<Workspace />} />
+        <Route path="/login" element={<LoginForm />} />
+        <Route path="/signup" element={<SignUpForm />} />
+        <Route path="/success" element={<Success />} />
 
-export default App;
+        {/* Add this before any catchall route */}
+        {import.meta.env.VITE_TEMPO && <Route path="/tempobook/*" />}
+      </Routes>
+    </>
+  );
+}
