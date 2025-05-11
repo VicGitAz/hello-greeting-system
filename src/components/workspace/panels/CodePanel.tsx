@@ -31,6 +31,19 @@ import {
 } from "@/components/ui/resizable";
 import "devicon/devicon.min.css";
 
+// Define interfaces for file tree structure
+interface FileItem {
+  type: 'file';
+  path: string;
+}
+
+interface DirectoryItem {
+  type: 'directory';
+  children: Record<string, FileTreeItem>;
+}
+
+type FileTreeItem = FileItem | DirectoryItem;
+
 // Dynamically import Monaco Editor to prevent SSR issues
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
   ssr: false,
@@ -44,8 +57,8 @@ const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
 export default function CodePanel() {
   const [selectedFile, setSelectedFile] = useState("index.html");
   const [openFiles, setOpenFiles] = useState(["index.html"]);
-  const [generatedCode, setGeneratedCode] = useState(null);
-  const [parsedFiles, setParsedFiles] = useState({
+  const [generatedCode, setGeneratedCode] = useState<string | null>(null);
+  const [parsedFiles, setParsedFiles] = useState<Record<string, string>>({
     "index.html": "<!-- No code generated yet -->",
   });
   const [editorTheme, setEditorTheme] = useState("vs-light");
@@ -53,11 +66,11 @@ export default function CodePanel() {
   const { toast } = useToast();
   const editorRef = useRef(null);
   // State to track files with unsaved changes
-  const [unsavedChanges, setUnsavedChanges] = useState(new Set());
+  const [unsavedChanges, setUnsavedChanges] = useState<Set<string>>(new Set());
   // Ref to hold the latest selectedFile for event listeners
   const selectedFileRef = useRef(selectedFile);
   // State for file tree structure
-  const [fileTree, setFileTree] = useState({});
+  const [fileTree, setFileTree] = useState<Record<string, FileTreeItem>>({});
 
   // Update the ref whenever selectedFile changes
   useEffect(() => {
@@ -85,8 +98,8 @@ export default function CodePanel() {
     return () => observer.disconnect();
   }, []);
 
-  const getDeviconClass = (filename) => {
-    const ext = filename.split(".").pop().toLowerCase();
+  const getDeviconClass = (filename: string): string => {
+    const ext = filename.split(".").pop()?.toLowerCase() || "";
     switch (ext) {
       case "html":
         return "devicon-html5-plain colored";
@@ -108,8 +121,8 @@ export default function CodePanel() {
   };
 
   // Get language based on file extension
-  const getLanguage = (filename) => {
-    const ext = filename.split(".").pop().toLowerCase();
+  const getLanguage = (filename: string): string => {
+    const ext = filename.split(".").pop()?.toLowerCase() || "";
     if (ext === "html") return "html";
     if (ext === "css") return "css";
     if (ext === "js") return "javascript";
@@ -123,22 +136,22 @@ export default function CodePanel() {
 
   useEffect(() => {
     // Listen for code updates from the prompt panel
-    const handleAppPreviewUpdate = (event) => {
+    const handleAppPreviewUpdate = (event: CustomEvent<{ code: string }>) => {
       if (event.detail.code) {
         setGeneratedCode(event.detail.code);
         parseCodeIntoFiles(event.detail.code);
       }
     };
 
-    document.addEventListener("app-preview-update", handleAppPreviewUpdate);
+    document.addEventListener("app-preview-update", handleAppPreviewUpdate as EventListener);
     return () => {
-      document.removeEventListener("app-preview-update", handleAppPreviewUpdate);
+      document.removeEventListener("app-preview-update", handleAppPreviewUpdate as EventListener);
     };
   }, []);
 
   // Build file tree from flat paths
-  const buildFileTree = (files) => {
-    const tree = {};
+  const buildFileTree = (files: Record<string, string>): Record<string, FileTreeItem> => {
+    const tree: Record<string, FileTreeItem> = {};
     
     Object.keys(files).forEach(path => {
       const parts = path.split('/');
@@ -157,9 +170,13 @@ export default function CodePanel() {
         } else {
           // This is a directory
           if (!currentLevel[part]) {
-            currentLevel[part] = { type: 'directory', children: {} };
+            currentLevel[part] = { 
+              type: 'directory', 
+              children: {} 
+            };
           }
-          currentLevel = currentLevel[part].children;
+          // TypeScript needs explicit cast here to safely access children
+          currentLevel = ((currentLevel[part] as DirectoryItem).children);
         }
       }
     });
@@ -167,7 +184,7 @@ export default function CodePanel() {
     return tree;
   };
 
-  const parseCodeIntoFiles = (code) => {
+  const parseCodeIntoFiles = (code: string | null) => {
     // Check if the code is a string
     if (typeof code !== 'string') {
       console.error("Code is not a string:", code);
@@ -179,7 +196,7 @@ export default function CodePanel() {
       // This handles both comment formats: "// src/App.tsx" and "// src/App.tsx Content..."
       const filePathPattern = /\/\/\s+([^\n]+\.[a-zA-Z0-9]+)(?:\s*|\n|$)([\s\S]*?)(?=\/\/\s+[^\n]+\.[a-zA-Z0-9]+(?:\s*|\n|$)|$)/g;
       
-      const files = {};
+      const files: Record<string, string> = {};
       let match;
       let foundFiles = false;
       
@@ -306,7 +323,7 @@ export default function CodePanel() {
   };
 
   // Handle editor mounting
-  const handleEditorDidMount = (editor, monaco) => {
+  const handleEditorDidMount = (editor: any, monaco: any) => {
     editorRef.current = editor;
 
     // Add Ctrl+S command to trigger preview update and clear unsaved state
@@ -347,7 +364,9 @@ export default function CodePanel() {
   };
 
   // Handle code changes in the editor
-  const handleEditorChange = (value) => {
+  const handleEditorChange = (value: string | undefined) => {
+    if (typeof value === 'undefined') return;
+    
     const currentFile = selectedFileRef.current;
     setParsedFiles((prev) => ({
       ...prev,
@@ -363,7 +382,7 @@ export default function CodePanel() {
   };
 
   // Open a file in editor
-  const openFile = (filename) => {
+  const openFile = (filename: string) => {
     setSelectedFile(filename);
     if (!openFiles.includes(filename)) {
       setOpenFiles((prev) => [...prev, filename]);
@@ -371,7 +390,7 @@ export default function CodePanel() {
   };
 
   // Close a file tab
-  const closeFileTab = (filename, e) => {
+  const closeFileTab = (filename: string, e: React.MouseEvent) => {
     e.stopPropagation();
 
     // Remove the file from open files
@@ -401,17 +420,18 @@ export default function CodePanel() {
   };
 
   // Render file tree recursively
-  const renderFileTree = (tree, basePath = "") => {
+  const renderFileTree = (tree: Record<string, FileTreeItem>, basePath = "") => {
     return Object.entries(tree).map(([name, item]) => {
       const path = basePath ? `${basePath}/${name}` : name;
       
-      if (item.type === 'file') {
+      if ((item as FileItem).type === 'file') {
+        const fileItem = item as FileItem;
         return (
           <div 
-            key={item.path}
-            onClick={() => openFile(item.path)}
+            key={fileItem.path}
+            onClick={() => openFile(fileItem.path)}
             className={`pl-2 py-1 text-sm cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center ${
-              selectedFile === item.path ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : ''
+              selectedFile === fileItem.path ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : ''
             }`}
           >
             <File className="h-4 w-4 mr-2" />
@@ -420,7 +440,8 @@ export default function CodePanel() {
         );
       }
       
-      if (item.type === 'directory') {
+      if ((item as DirectoryItem).type === 'directory') {
+        const dirItem = item as DirectoryItem;
         return (
           <div key={path} className="pl-2">
             <div className="flex items-center py-1 text-sm font-medium">
@@ -428,7 +449,7 @@ export default function CodePanel() {
               {name}
             </div>
             <div className="pl-2 border-l border-gray-200 dark:border-gray-700 ml-2">
-              {renderFileTree(item.children, path)}
+              {renderFileTree(dirItem.children, path)}
             </div>
           </div>
         );
