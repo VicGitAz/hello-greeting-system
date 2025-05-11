@@ -1,3 +1,4 @@
+
 import { ProjectSession } from "./project-generator";
 
 export interface TerminalCommand {
@@ -28,6 +29,7 @@ export class TerminalService {
     }
   > = new Map();
   private static connectionPromise: Promise<WebSocket> | null = null;
+  private static activeDevServer: { url: string; port: number } | null = null;
 
   /**
    * Initialize WebSocket connection to terminal server
@@ -75,6 +77,27 @@ export class TerminalService {
             if (data.type === "commandResponse" && data.id) {
               // Store command response
               this.commandResponses.set(data.id, data.output || "");
+
+              // Check for dev server URL in the output
+              if (data.output && typeof data.output === 'string') {
+                // Look for common dev server patterns
+                const urlMatches = data.output.match(/(https?:\/\/localhost:[0-9]+)/g);
+                if (urlMatches && urlMatches.length > 0) {
+                  const url = urlMatches[0];
+                  const portMatch = url.match(/:([0-9]+)/);
+                  const port = portMatch ? parseInt(portMatch[1]) : null;
+                  
+                  if (port) {
+                    this.activeDevServer = { url, port };
+                    // Dispatch event for preview panel to use
+                    const devServerEvent = new CustomEvent('dev-server-started', {
+                      detail: { url, port }
+                    });
+                    document.dispatchEvent(devServerEvent);
+                    console.log(`Dev server detected at ${url}`);
+                  }
+                }
+              }
 
               // Resolve command promise if exists
               const promise = this.commandPromises.get(data.id);
@@ -307,6 +330,68 @@ export class TerminalService {
     }
 
     return responses;
+  }
+
+  /**
+   * Start a development server for the project files
+   */
+  static async startDevServer(session: ProjectSession, directory: string): Promise<string | null> {
+    try {
+      // Change to the project directory
+      await this.executeCommand({
+        command: `cd ${directory}`,
+        session,
+      });
+
+      // Make sure we have a package.json file
+      const packageJsonExists = await this.executeCommand({
+        command: `test -f ${directory}/package.json && echo "exists" || echo "not found"`,
+        session,
+      });
+      
+      if (!packageJsonExists.output.includes("exists")) {
+        console.log("No package.json found in directory: " + directory);
+        return null;
+      }
+
+      // Make sure there's a build:dev script in package.json
+      await this.executeCommand({
+        command: `cd ${directory} && npm pkg set "scripts.build:dev"="vite build --mode development"`,
+        session,
+      });
+
+      // Install dependencies
+      await this.executeCommand({
+        command: `cd ${directory} && npm install`,
+        session,
+      });
+
+      // Start the development server
+      const devServerResponse = await this.executeCommand({
+        command: `cd ${directory} && npm run dev`,
+        session,
+      });
+
+      // Parse the output to extract the URL
+      if (devServerResponse.output) {
+        const urlMatch = devServerResponse.output.match(/(https?:\/\/localhost:[0-9]+)/);
+        if (urlMatch && urlMatch[1]) {
+          return urlMatch[1];
+        }
+      }
+      
+      return null;
+    } catch (error) {
+      console.error("Failed to start development server:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Get the currently active dev server URL, if any
+   */
+  static getActiveDevServer(): { url: string; port: number } | null {
+    return this.activeDevServer;
   }
 
   /**

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,11 +15,13 @@ import {
   RefreshCw,
   ExternalLink,
 } from "lucide-react";
+import { TerminalService } from "@/lib/terminal-service";
 
 export default function PreviewPanel() {
   const [viewMode, setViewMode] = useState<"desktop" | "mobile">("desktop");
   const [isLoading, setIsLoading] = useState(false);
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
+  const [devServerUrl, setDevServerUrl] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
@@ -31,20 +32,62 @@ export default function PreviewPanel() {
       setTimeout(() => setIsLoading(false), 1000);
     };
 
+    // Listen for dev server updates
+    const handleDevServerStarted = (event: CustomEvent) => {
+      if (event.detail && event.detail.url) {
+        console.log("Dev server started:", event.detail.url);
+        setDevServerUrl(event.detail.url);
+        setIsLoading(false);
+      }
+    };
+
     document.addEventListener(
       "app-preview-update",
       handleAppPreviewUpdate as EventListener
+    );
+    document.addEventListener(
+      "dev-server-started",
+      handleDevServerStarted as EventListener
     );
     return () => {
       document.removeEventListener(
         "app-preview-update",
         handleAppPreviewUpdate as EventListener
       );
+      document.removeEventListener(
+        "dev-server-started",
+        handleDevServerStarted as EventListener
+      );
     };
   }, []);
 
+  // Check for active dev server on component mount
   useEffect(() => {
-    if (generatedCode && iframeRef.current) {
+    const activeServer = TerminalService.getActiveDevServer();
+    if (activeServer) {
+      setDevServerUrl(activeServer.url);
+    }
+  }, []);
+
+  useEffect(() => {
+    // If we have a dev server URL, use that in the iframe
+    if (devServerUrl && iframeRef.current) {
+      setIsLoading(true);
+      const iframe = iframeRef.current;
+      iframe.src = devServerUrl;
+      
+      // Add a load event listener to detect when the iframe has loaded
+      const handleLoad = () => {
+        setIsLoading(false);
+      };
+      
+      iframe.addEventListener('load', handleLoad);
+      return () => {
+        iframe.removeEventListener('load', handleLoad);
+      };
+    }
+    // Otherwise use the generated code
+    else if (generatedCode && iframeRef.current && !devServerUrl) {
       const iframe = iframeRef.current;
       const iframeDoc =
         iframe.contentDocument || iframe.contentWindow?.document;
@@ -118,7 +161,7 @@ export default function PreviewPanel() {
               <body>
                 <div style="color: red; padding: 20px;">
                   <h3>Error rendering preview</h3>
-                  <p>${error.message}</p>
+                  <p>${(error as Error).message}</p>
                 </div>
               </body>
             </html>
@@ -127,7 +170,7 @@ export default function PreviewPanel() {
         }
       }
     }
-  }, [generatedCode, isLoading]);
+  }, [generatedCode, isLoading, devServerUrl]);
 
   // Helper function to parse files from code with file path comments
   const parseFiles = (code: string): Record<string, string> => {
@@ -142,7 +185,7 @@ export default function PreviewPanel() {
       const line = lines[i];
       
       // Check if line is a file path comment (e.g., "// src/App.tsx")
-      if (line.trimStart().startsWith('// ') && !line.includes('//')) {
+      if (line.trimStart().startsWith('// ') && line.includes('.')) {
         // If we were collecting content for a previous file, save it
         if (currentFilePath) {
           files[currentFilePath] = currentFileContent.join('\n');
@@ -151,7 +194,9 @@ export default function PreviewPanel() {
         
         // Extract path from comment
         const path = line.trimStart().replace('// ', '');
-        currentFilePath = path;
+        if (path.includes('.')) { // Only treat as file path if it contains a dot
+          currentFilePath = path;
+        }
       } 
       // If not a path comment and we have a current file path, add to content
       else if (currentFilePath) {
@@ -169,6 +214,14 @@ export default function PreviewPanel() {
 
   const handleRefresh = () => {
     setIsLoading(true);
+    
+    // If we have a dev server URL, just reload the iframe
+    if (devServerUrl && iframeRef.current) {
+      const iframe = iframeRef.current;
+      iframe.src = iframe.src;
+      return;
+    }
+    
     setTimeout(() => {
       if (iframeRef.current && generatedCode) {
         const iframe = iframeRef.current;
@@ -200,6 +253,11 @@ export default function PreviewPanel() {
   };
 
   const openInNewTab = () => {
+    if (devServerUrl) {
+      window.open(devServerUrl, "_blank");
+      return;
+    }
+    
     if (!generatedCode) return;
 
     const blob = new Blob([generatedCode], { type: "text/html" });
@@ -213,7 +271,7 @@ export default function PreviewPanel() {
         <div>
           <h3 className="font-medium text-lg">Live Preview</h3>
           <p className="text-sm text-muted-foreground">
-            See your app in real-time
+            {devServerUrl ? "Connected to dev server" : "See your app in real-time"}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -239,7 +297,6 @@ export default function PreviewPanel() {
             variant="outline"
             size="sm"
             onClick={handleRefresh}
-            disabled={!generatedCode}
           >
             <RefreshCw
               className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
@@ -249,7 +306,7 @@ export default function PreviewPanel() {
             variant="outline"
             size="sm"
             onClick={openInNewTab}
-            disabled={!generatedCode}
+            disabled={!generatedCode && !devServerUrl}
           >
             <ExternalLink className="h-4 w-4" />
           </Button>
@@ -274,7 +331,7 @@ export default function PreviewPanel() {
             <div className="h-full w-full flex items-center justify-center">
               <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full"></div>
             </div>
-          ) : generatedCode ? (
+          ) : devServerUrl || generatedCode ? (
             <iframe
               ref={iframeRef}
               className="w-full h-full border-0"
