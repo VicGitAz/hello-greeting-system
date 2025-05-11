@@ -2,6 +2,13 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   FileCode,
   Copy,
   Download,
@@ -11,6 +18,9 @@ import {
   ChevronRight,
   CircleDot,
   Save,
+  Plus,
+  Folder,
+  File,
 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import dynamic from "next/dynamic";
@@ -46,6 +56,8 @@ export default function CodePanel() {
   const [unsavedChanges, setUnsavedChanges] = useState(new Set());
   // Ref to hold the latest selectedFile for event listeners
   const selectedFileRef = useRef(selectedFile);
+  // State for file tree structure
+  const [fileTree, setFileTree] = useState({});
 
   // Update the ref whenever selectedFile changes
   useEffect(() => {
@@ -120,12 +132,40 @@ export default function CodePanel() {
 
     document.addEventListener("app-preview-update", handleAppPreviewUpdate);
     return () => {
-      document.removeEventListener(
-        "app-preview-update",
-        handleAppPreviewUpdate
-      );
+      document.removeEventListener("app-preview-update", handleAppPreviewUpdate);
     };
   }, []);
+
+  // Build file tree from flat paths
+  const buildFileTree = (files) => {
+    const tree = {};
+    
+    Object.keys(files).forEach(path => {
+      const parts = path.split('/');
+      let currentLevel = tree;
+      
+      // Process each part of the path
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        
+        // Skip empty parts
+        if (!part) continue;
+        
+        // If this is the last part (file)
+        if (i === parts.length - 1) {
+          currentLevel[part] = { type: 'file', path };
+        } else {
+          // This is a directory
+          if (!currentLevel[part]) {
+            currentLevel[part] = { type: 'directory', children: {} };
+          }
+          currentLevel = currentLevel[part].children;
+        }
+      }
+    });
+    
+    return tree;
+  };
 
   const parseCodeIntoFiles = (code) => {
     // Check if the code is a string
@@ -135,80 +175,67 @@ export default function CodePanel() {
     }
 
     try {
-      // If this is already LLM response format with file paths as comments
-      if (code.includes("// src/") || code.includes("// components/")) {
-        const files = {};
-        let currentFilePath = null;
-        let currentFileContent = [];
+      // Improved regex to detect file path comments like "// src/App.tsx"
+      // This handles both comment formats: "// src/App.tsx" and "// src/App.tsx Content..."
+      const filePathPattern = /\/\/\s+([^\n]+\.[a-zA-Z0-9]+)(?:\s*|\n|$)([\s\S]*?)(?=\/\/\s+[^\n]+\.[a-zA-Z0-9]+(?:\s*|\n|$)|$)/g;
+      
+      const files = {};
+      let match;
+      let foundFiles = false;
+      
+      // Clone the code string to avoid modifying the original
+      let codeToProcess = code;
+      
+      while ((match = filePathPattern.exec(codeToProcess)) !== null) {
+        const filePath = match[1].trim();
+        // Get content, but trim whitespace and remove any leading/trailing comments
+        let content = match[2] ? match[2].trim() : "";
         
-        // Split the code by lines
-        const lines = code.split('\n');
-        
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
-          
-          // Check if line is a file path comment (e.g., "// src/App.tsx")
-          if (line.trimStart().startsWith('// ') && !line.includes('//')) {
-            // If we were collecting content for a previous file, save it
-            if (currentFilePath) {
-              files[currentFilePath] = currentFileContent.join('\n');
-              currentFileContent = [];
-            }
-            
-            // Extract path from comment
-            const path = line.trimStart().replace('// ', '');
-            currentFilePath = path;
-          } 
-          // If not a path comment and we have a current file path, add to content
-          else if (currentFilePath) {
-            currentFileContent.push(line);
+        // Clean up the content if needed
+        if (content.startsWith("// ")) {
+          const lines = content.split("\n");
+          if (lines[0].trim().startsWith("// ")) {
+            lines.shift(); // Remove the first line if it's a comment
+            content = lines.join("\n");
           }
         }
         
-        // Don't forget to add the last file
-        if (currentFilePath && currentFileContent.length > 0) {
-          files[currentFilePath] = currentFileContent.join('\n');
+        if (filePath) {
+          files[filePath] = content;
+          foundFiles = true;
         }
+      }
+      
+      if (foundFiles && Object.keys(files).length > 0) {
+        setParsedFiles(files);
+        setFileTree(buildFileTree(files));
         
-        if (Object.keys(files).length > 0) {
-          setParsedFiles(files);
-          setSelectedFile(Object.keys(files)[0]);
-          setOpenFiles([Object.keys(files)[0]]);
-          // Clear unsaved state when new code is generated
-          setUnsavedChanges(new Set());
-          return;
-        }
+        // Open the first file by default
+        const firstFile = Object.keys(files)[0];
+        setSelectedFile(firstFile);
+        setOpenFiles([firstFile]);
+        
+        // Clear unsaved state when new code is generated
+        setUnsavedChanges(new Set());
+        return;
       }
-
-      // Default fallback if we don't detect file structure
-      const files = {
+      
+      // Fallback: If no structured file paths found, treat as a single HTML file
+      setParsedFiles({
         "index.html": code,
-      };
-
-      // Try to extract CSS and JavaScript if they're in separate blocks
-      const cssMatch = code.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
-      const jsMatch = code.match(/<script[^>]*>([\s\S]*?)<\/script>/i);
-
-      if (cssMatch && cssMatch[1]) {
-        files["styles.css"] = cssMatch[1].trim();
-      }
-
-      if (jsMatch && jsMatch[1]) {
-        files["script.js"] = jsMatch[1].trim();
-      }
-
-      setParsedFiles(files);
-      setSelectedFile(Object.keys(files)[0]);
-      setOpenFiles([Object.keys(files)[0]]);
-      // Clear unsaved state when new code is generated
+      });
+      setFileTree(buildFileTree({ "index.html": code }));
+      setSelectedFile("index.html");
+      setOpenFiles(["index.html"]);
       setUnsavedChanges(new Set());
       
     } catch (error) {
       console.error("Error parsing code into files:", error);
       // Fallback to treating the entire code as a single HTML file
       setParsedFiles({
-        "index.html": code,
+        "index.html": code || "<!-- Error parsing code -->",
       });
+      setFileTree(buildFileTree({ "index.html": code }));
       setSelectedFile("index.html");
       setOpenFiles(["index.html"]);
     }
@@ -245,17 +272,37 @@ export default function CodePanel() {
   };
 
   const handleDownloadAll = () => {
-    if (!generatedCode) return;
+    if (!parsedFiles || Object.keys(parsedFiles).length === 0) return;
 
-    const blob = new Blob([generatedCode], { type: "text/html" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "generated-app.html";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    // Use JSZip to create a zip file with the project structure
+    import("jszip").then((JSZip) => {
+      const zip = new JSZip.default();
+      
+      // Add all files to the zip with their folder structure
+      Object.entries(parsedFiles).forEach(([path, content]) => {
+        zip.file(path, content);
+      });
+      
+      // Generate the zip file
+      zip.generateAsync({ type: "blob" }).then((content) => {
+        // Create download link
+        const url = URL.createObjectURL(content);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "project.zip";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      });
+    }).catch(error => {
+      console.error("Error creating zip file:", error);
+      toast({
+        title: "Download failed",
+        description: "Could not create zip file",
+        variant: "destructive"
+      });
+    });
   };
 
   // Handle editor mounting
@@ -276,7 +323,6 @@ export default function CodePanel() {
         document.dispatchEvent(previewEvent);
 
         // Update parsedFiles state with the saved content
-        // This ensures parsedFiles reflects the content that was just 'saved' and dispatched
         setParsedFiles((prev) => ({
           ...prev,
           [currentFile]: editorValue,
@@ -295,46 +341,25 @@ export default function CodePanel() {
           description: `${currentFile} saved`,
         });
 
-        // Prevent default browser save dialog
         return true; // Signal that the command handled the event
       }
     );
-
-    // Clean up the command when the component unmounts (if necessary, though editor mounting is rare)
-    // return () => {
-    //   saveCommandDisposable.dispose();
-    // };
   };
 
   // Handle code changes in the editor
   const handleEditorChange = (value) => {
-    const currentFile = selectedFileRef.current; // Use ref for latest selected file
+    const currentFile = selectedFileRef.current;
     setParsedFiles((prev) => ({
       ...prev,
       [currentFile]: value,
     }));
     // Mark file as unsaved
     setUnsavedChanges((prev) => new Set(prev).add(currentFile));
-    // REMOVED: Dispatch event with the updated code for live preview
-    // const previewEvent = new CustomEvent("app-preview-update", {
-    //   detail: { code: value },
-    // });
-    // document.dispatchEvent(previewEvent);
-  };
-
-  // Toggle editor theme
-  const toggleTheme = () => {
-    setEditorTheme((prev) => (prev === "vs-light" ? "vs-dark" : "vs-light"));
   };
 
   // Toggle sidebar collapse
   const toggleSidebar = () => {
     setSidebarCollapsed((prev) => !prev);
-  };
-
-  // Get file extension abbreviation
-  const getFileExtAbbr = (filename) => {
-    return filename.split(".").pop().toUpperCase();
   };
 
   // Open a file in editor
@@ -375,22 +400,82 @@ export default function CodePanel() {
     }
   };
 
+  // Render file tree recursively
+  const renderFileTree = (tree, basePath = "") => {
+    return Object.entries(tree).map(([name, item]) => {
+      const path = basePath ? `${basePath}/${name}` : name;
+      
+      if (item.type === 'file') {
+        return (
+          <div 
+            key={item.path}
+            onClick={() => openFile(item.path)}
+            className={`pl-2 py-1 text-sm cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center ${
+              selectedFile === item.path ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : ''
+            }`}
+          >
+            <File className="h-4 w-4 mr-2" />
+            {name}
+          </div>
+        );
+      }
+      
+      if (item.type === 'directory') {
+        return (
+          <div key={path} className="pl-2">
+            <div className="flex items-center py-1 text-sm font-medium">
+              <Folder className="h-4 w-4 mr-2" />
+              {name}
+            </div>
+            <div className="pl-2 border-l border-gray-200 dark:border-gray-700 ml-2">
+              {renderFileTree(item.children, path)}
+            </div>
+          </div>
+        );
+      }
+      
+      return null;
+    });
+  };
+
+  // Function to handle the "Save All & Preview" button
+  const handleSaveAndPreview = () => {
+    // Get all the code as a string
+    let allCode = '';
+    Object.entries(parsedFiles).forEach(([path, content]) => {
+      allCode += `// ${path}\n${content}\n\n`;
+    });
+    
+    // Dispatch the event with all code for preview
+    const previewEvent = new CustomEvent("app-preview-update", {
+      detail: { code: allCode },
+    });
+    document.dispatchEvent(previewEvent);
+    
+    // Clear all unsaved changes
+    setUnsavedChanges(new Set());
+    
+    toast({
+      title: "All files saved",
+      description: "Preview updated with all files"
+    });
+  };
+
   return (
     <div className="flex flex-col h-full bg-background rounded-lg border shadow-sm overflow-hidden">
       <div className="p-3 border-b flex justify-between items-center">
         <div>
           <h3 className="font-medium text-lg">Code Editor</h3>
           <p className="text-sm text-muted-foreground">
-            Edit code and use terminal
+            Edit code and view project files
           </p>
         </div>
         <div className="flex gap-2">
-          {/* Copy and Download buttons now work with the currently active tab's content */}
           <Button
             variant="outline"
             size="sm"
             onClick={handleCopyCode}
-            disabled={!parsedFiles[selectedFile]} // Disable if no content for selected file
+            disabled={!parsedFiles[selectedFile]}
           >
             <Copy className="h-4 w-4 mr-1" /> Copy
           </Button>
@@ -398,10 +483,19 @@ export default function CodePanel() {
             variant="outline"
             size="sm"
             onClick={handleDownloadCode}
-            disabled={!parsedFiles[selectedFile]} // Disable if no content for selected file
+            disabled={!parsedFiles[selectedFile]}
           >
             <Download className="h-4 w-4 mr-1" /> Download
           </Button>
+          {Object.keys(parsedFiles).length > 1 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDownloadAll}
+            >
+              <Download className="h-4 w-4 mr-1" /> Download All
+            </Button>
+          )}
         </div>
       </div>
 
@@ -420,31 +514,24 @@ export default function CodePanel() {
                 }`}
               >
                 <div className="p-2 overflow-auto h-full bg-background">
-                  <h4 className="text-sm font-medium mb-2 px-2">Files</h4>
+                  <h4 className="text-sm font-medium mb-2 px-2">Project Files</h4>
                   <div className="space-y-1">
-                    {Object.keys(parsedFiles).map((file) => (
-                      <Button
-                        key={file}
-                        variant={selectedFile === file ? "secondary" : "ghost"}
-                        className="w-full justify-start text-sm h-8"
-                        onClick={() => openFile(file)}
-                      >
-                        <FileCode className="h-4 w-4 mr-2" />
-                        {file}
-                      </Button>
-                    ))}
+                    {/* Render the hierarchical file tree */}
+                    {Object.keys(fileTree).length > 0 ? 
+                      renderFileTree(fileTree) :
+                      <div className="text-sm text-muted-foreground px-2">No files generated yet</div>
+                    }
                   </div>
 
-                  {/* Download All button downloads the initially generated code */}
-                  {generatedCode && (
+                  {Object.keys(parsedFiles).length > 1 && (
                     <div className="mt-4 pt-4 border-t">
                       <Button
                         variant="outline"
                         size="sm"
                         className="w-full justify-center"
-                        onClick={handleDownloadAll}
+                        onClick={handleSaveAndPreview}
                       >
-                        <Download className="h-4 w-4 mr-1" /> Download All HTML
+                        <Save className="h-4 w-4 mr-1" /> Save All & Preview
                       </Button>
                     </div>
                   )}
@@ -493,8 +580,8 @@ export default function CodePanel() {
                         }`}
                       >
                         <i className={`${getDeviconClass(file)} text-sm`}></i>
-                        {file}
-                        {/* Unsaved indicator - using CircleDot icon */}
+                        {file.split('/').pop()} {/* Only show filename, not path */}
+                        {/* Unsaved indicator - using SaveIcon */}
                         {unsavedChanges.has(file) && (
                           <Save className="ml-1 h-3 w-3 text-black" />
                         )}
@@ -508,11 +595,9 @@ export default function CodePanel() {
                     </div>
                   ))}
                 </div>
-                {/* Maximize button placeholder if needed */}
-                {/* <div><Maximize className="h-4 w-4 text-gray-600 dark:text-gray-400" /></div> */}
               </div>
 
-              {/* Monaco editor - Always render */}
+              {/* Monaco editor */}
               <div className="flex-1">
                 <MonacoEditor
                   height="100%"
@@ -543,11 +628,8 @@ export default function CodePanel() {
                       top: 12,
                       bottom: 12,
                     },
-                    // Add placeholder option if supported by monaco-editor/react or handle empty state within Monaco
                   }}
                 />
-                {/* Removed the conditional rendering for the "No files open" message */}
-                {/* Replaced with Monaco editor always rendering */}
               </div>
             </div>
           </div>
